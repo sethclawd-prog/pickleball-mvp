@@ -12,8 +12,10 @@ export type Session = {
   id: string;
   code: string;
   starts_at: string;
+  ends_at: string;
   note: string | null;
   capacity: number | null;
+  court: string | null;
   venue: string;
   created_by: string;
   created_at: string;
@@ -77,8 +79,10 @@ export interface Database {
           id?: string;
           code: string;
           starts_at: string;
+          ends_at: string;
           note?: string | null;
           capacity?: number | null;
+          court?: string | null;
           venue?: string;
           created_by: string;
           created_at?: string;
@@ -88,8 +92,10 @@ export interface Database {
           id?: string;
           code?: string;
           starts_at?: string;
+          ends_at?: string;
           note?: string | null;
           capacity?: number | null;
+          court?: string | null;
           venue?: string;
           created_by?: string;
           created_at?: string;

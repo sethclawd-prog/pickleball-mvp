@@ -13,6 +13,52 @@ interface CreateSessionModalProps {
   onCreated: (sessionId: string) => void;
 }
 
+type TimeOption = {
+  value: string;
+  label: string;
+};
+
+const HALF_HOUR_OPTIONS: TimeOption[] = Array.from({ length: 48 }, (_, slotIndex) => {
+  const hour = Math.floor(slotIndex / 2);
+  const minute = (slotIndex % 2) * 30;
+  const value = `${`${hour}`.padStart(2, '0')}:${`${minute}`.padStart(2, '0')}`;
+  const label = format(new Date(2026, 0, 1, hour, minute), 'h:mm a');
+  return { value, label };
+});
+
+function roundUpToHalfHour(input: Date): Date {
+  const next = new Date(input);
+  next.setSeconds(0, 0);
+  const minutes = next.getMinutes();
+
+  if (minutes === 0 || minutes === 30) {
+    return next;
+  }
+
+  if (minutes < 30) {
+    next.setMinutes(30);
+    return next;
+  }
+
+  next.setHours(next.getHours() + 1);
+  next.setMinutes(0);
+  return next;
+}
+
+function toDateString(value: Date): string {
+  return format(value, 'yyyy-MM-dd');
+}
+
+function toTimeString(value: Date): string {
+  return format(value, 'HH:mm');
+}
+
+function combineDateAndTime(dateValue: string, timeValue: string): Date {
+  const [year, month, day] = dateValue.split('-').map(Number);
+  const [hours, minutes] = timeValue.split(':').map(Number);
+  return new Date(year, month - 1, day, hours, minutes, 0, 0);
+}
+
 export default function CreateSessionModal({
   isOpen,
   userId,
@@ -20,9 +66,14 @@ export default function CreateSessionModal({
   onCreated
 }: CreateSessionModalProps) {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
-  const [startsAt, setStartsAt] = useState(() => format(addHours(new Date(), 2), "yyyy-MM-dd'T'HH:mm"));
+  const [initialStart] = useState(() => roundUpToHalfHour(addHours(new Date(), 2)));
+  const [sessionDate, setSessionDate] = useState(() => toDateString(initialStart));
+  const [startTime, setStartTime] = useState(() => toTimeString(initialStart));
+  const [endTime, setEndTime] = useState(() => toTimeString(addHours(initialStart, 2)));
   const [note, setNote] = useState('Doubles at Bay Padel');
+  const [hasCapacity, setHasCapacity] = useState(false);
   const [capacity, setCapacity] = useState(8);
+  const [court, setCourt] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,10 +93,20 @@ export default function CreateSessionModal({
       setSaving(true);
       setError(null);
 
+      const startDateTime = combineDateAndTime(sessionDate, startTime);
+      const endDateTime = combineDateAndTime(sessionDate, endTime);
+      if (endDateTime <= startDateTime) {
+        setError('End time must be after start time.');
+        setSaving(false);
+        return;
+      }
+
       const session = await createSession(supabase, {
-        startsAt: new Date(startsAt).toISOString(),
+        startsAt: startDateTime.toISOString(),
+        endsAt: endDateTime.toISOString(),
         note,
-        capacity,
+        capacity: hasCapacity ? capacity : null,
+        court,
         createdBy: userId
       });
 
@@ -77,15 +138,47 @@ export default function CreateSessionModal({
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-3">
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-ink">Date & time</span>
+            <span className="mb-1 block text-sm font-medium text-ink">Date</span>
             <input
               required
-              type="datetime-local"
-              value={startsAt}
-              onChange={(event) => setStartsAt(event.target.value)}
+              type="date"
+              value={sessionDate}
+              onChange={(event) => setSessionDate(event.target.value)}
               className="w-full rounded-xl border border-ink/15 px-3 py-2 text-ink outline-none ring-accent focus:ring-2"
             />
           </label>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-ink">Start time</span>
+              <select
+                value={startTime}
+                onChange={(event) => setStartTime(event.target.value)}
+                className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 text-ink outline-none ring-accent focus:ring-2"
+              >
+                {HALF_HOUR_OPTIONS.map((option) => (
+                  <option key={`start-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium text-ink">End time</span>
+              <select
+                value={endTime}
+                onChange={(event) => setEndTime(event.target.value)}
+                className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 text-ink outline-none ring-accent focus:ring-2"
+              >
+                {HALF_HOUR_OPTIONS.map((option) => (
+                  <option key={`end-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-ink">Note</span>
@@ -99,16 +192,52 @@ export default function CreateSessionModal({
           </label>
 
           <label className="block">
-            <span className="mb-1 block text-sm font-medium text-ink">Player cap</span>
+            <span className="mb-1 block text-sm font-medium text-ink">Which court(s) did you book?</span>
             <input
-              min={2}
-              max={16}
-              type="number"
-              value={capacity}
-              onChange={(event) => setCapacity(Number(event.target.value || 8))}
+              type="text"
+              value={court}
+              onChange={(event) => setCourt(event.target.value)}
+              placeholder="e.g. Court 3"
               className="w-full rounded-xl border border-ink/15 px-3 py-2 text-ink outline-none ring-accent focus:ring-2"
             />
           </label>
+
+          <div className="rounded-xl border border-ink/10 bg-surface-2 p-3">
+            <label className="flex items-center gap-2 text-sm font-medium text-ink">
+              <input
+                type="checkbox"
+                checked={hasCapacity}
+                onChange={(event) => setHasCapacity(event.target.checked)}
+                className="h-4 w-4 rounded border-ink/30 text-accent focus:ring-accent"
+              />
+              Set player limit?
+            </label>
+            {hasCapacity ? (
+              <label className="mt-2 block">
+                <span className="mb-1 block text-sm font-medium text-ink">Player cap</span>
+                <input
+                  required
+                  min={2}
+                  max={16}
+                  type="number"
+                  value={capacity}
+                  onChange={(event) => setCapacity(Number(event.target.value || 8))}
+                  className="w-full rounded-xl border border-ink/15 px-3 py-2 text-ink outline-none ring-accent focus:ring-2"
+                />
+              </label>
+            ) : (
+              <p className="mt-2 text-xs text-ink/70">No cap set means unlimited confirmed players.</p>
+            )}
+          </div>
+
+          <a
+            href="https://www.baypadel.com"
+            target="_blank"
+            rel="noreferrer"
+            className="flex w-full items-center justify-center rounded-xl border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm font-semibold text-ink transition hover:opacity-90"
+          >
+            Book a court on Bay Padel
+          </a>
 
           {error ? <p className="text-sm text-danger">{error}</p> : null}
 

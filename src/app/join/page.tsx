@@ -112,8 +112,9 @@ function JoinPageContent() {
       <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">Join from WhatsApp</p>
       <h1 className="mt-1 font-display text-3xl text-ink">{session.note || 'Open play at Bay Padel'}</h1>
       <p className="mt-2 text-sm text-ink/70">
-        {formatSessionTime(session.starts_at)} • {summarizeCounts(session)}
+        {formatSessionTime(session.starts_at, session.ends_at)} • {summarizeCounts(session)}
       </p>
+      {session.court ? <p className="mt-1 text-sm text-ink/70">Court: {session.court}</p> : null}
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button

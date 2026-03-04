@@ -146,11 +146,14 @@ export default function SessionDetailPage() {
       </Link>
 
       <section className="rounded-3xl border border-white/70 bg-white/95 p-5 shadow-card">
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">{formatSessionTime(session.starts_at)}</p>
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink/50">
+          {formatSessionTime(session.starts_at, session.ends_at)}
+        </p>
         <h1 className="mt-1 font-display text-3xl text-ink">{session.note || 'Open play at Bay Padel'}</h1>
         <p className="mt-2 text-sm text-ink/70">
           {session.venue} • {summarizeCounts(session)}
         </p>
+        {session.court ? <p className="mt-1 text-sm text-ink/70">Court: {session.court}</p> : null}
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button
@@ -187,6 +190,14 @@ export default function SessionDetailPage() {
             text={`Join our Bay Padel session (${session.code})`}
             url={shareUrl}
           />
+          <a
+            href="https://www.baypadel.com"
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-xl border border-accent/30 bg-accent-soft px-4 py-2 text-sm font-semibold text-ink transition hover:opacity-90"
+          >
+            Book a court on Bay Padel
+          </a>
         </div>
 
         {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}

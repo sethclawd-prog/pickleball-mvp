@@ -20,8 +20,10 @@ const sessionSelect = `
   id,
   code,
   starts_at,
+  ends_at,
   note,
   capacity,
+  court,
   venue,
   created_by,
   created_at,
@@ -62,8 +64,10 @@ function mapSession(raw: any): SessionWithParticipants {
     id: raw.id,
     code: raw.code,
     starts_at: raw.starts_at,
+    ends_at: raw.ends_at,
     note: raw.note,
     capacity: raw.capacity,
+    court: raw.court,
     venue: raw.venue,
     created_by: raw.created_by,
     created_at: raw.created_at,
@@ -134,8 +138,10 @@ export async function createSession(
   supabase: SupabaseClient<Database>,
   payload: {
     startsAt: string;
+    endsAt: string;
     note?: string;
-    capacity?: number;
+    capacity?: number | null;
+    court?: string;
     createdBy: string;
   }
 ): Promise<Session> {
@@ -147,8 +153,10 @@ export async function createSession(
       .insert({
         code: makeCode(),
         starts_at: payload.startsAt,
+        ends_at: payload.endsAt,
         note: payload.note?.trim() || null,
-        capacity: payload.capacity ?? 8,
+        capacity: payload.capacity ?? null,
+        court: payload.court?.trim() || null,
         created_by: payload.createdBy,
         venue: 'Bay Padel'
       })
@@ -224,17 +232,18 @@ export async function dropParticipation(
   }
 }
 
-export function formatSessionTime(isoString: string): string {
-  const date = parseISO(isoString);
-  const dayLabel = isToday(date) ? 'Today' : format(date, 'EEE');
-  return `${dayLabel} ${format(date, 'h:mm a')}`;
+export function formatSessionTime(startsAt: string, endsAt: string): string {
+  const startDate = parseISO(startsAt);
+  const endDate = parseISO(endsAt);
+  const dayLabel = isToday(startDate) ? 'Today' : format(startDate, 'EEE');
+  return `${dayLabel} ${format(startDate, 'h:mm a')} - ${format(endDate, 'h:mm a')}`;
 }
 
 export function summarizeCounts(session: SessionWithParticipants): string {
   const confirmed = session.participants.filter((p) => p.status === 'confirmed').length;
   const maybe = session.participants.filter((p) => p.status === 'maybe').length;
-  const cap = session.capacity ?? 8;
-  return `${confirmed}/${cap} confirmed${maybe ? ` • ${maybe} maybe` : ''}`;
+  const confirmedLabel = session.capacity ? `${confirmed}/${session.capacity} confirmed` : `${confirmed} confirmed`;
+  return `${confirmedLabel}${maybe ? ` • ${maybe} maybe` : ''}`;
 }
 
 export function sortRosterNames(session: SessionWithParticipants, status: ParticipantStatus): string[] {
