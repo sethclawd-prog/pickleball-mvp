@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --surface: #f8faf8;
+  --surface-2: #ecf3f0;
+  --ink: #103336;
+  --accent: #0f766e;
+  --accent-soft: #c7ece8;
+  --warm: #ffd37e;
+  --success: #169c64;
+  --danger: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body), sans-serif;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(15, 118, 110, 0.14), transparent 44%),
+    radial-gradient(circle at 90% 20%, rgba(255, 211, 126, 0.2), transparent 38%),
+    var(--surface);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display), serif;
+  letter-spacing: -0.02em;
+}
+
+.background-orb {
+  position: fixed;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(16, 51, 54, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(16, 51, 54, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(circle at center, black 40%, transparent 90%);
+}

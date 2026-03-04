@@ -1,0 +1,17 @@
+{
+  "name": "Bay Padel Crew",
+  "short_name": "BayCrew",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8faf8",
+  "theme_color": "#0f766e",
+  "description": "Casual pickleball session coordination for one WhatsApp group.",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
