@@ -156,7 +156,7 @@ export async function createSession(
       .single();
 
     if (!error && data) {
-      created = data;
+      created = data as Session;
       break;
     }
 

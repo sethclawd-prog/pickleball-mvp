@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 
 import { IDENTITY_UPDATED_EVENT, getStoredIdentity } from '@/lib/identity';
 import {
@@ -14,7 +14,7 @@ import {
 import { getSupabaseBrowserClient } from '@/lib/supabase';
 import type { SessionWithParticipants, StoredIdentity } from '@/lib/types';
 
-export default function JoinPage() {
+function JoinPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const code = searchParams.get('code')?.toUpperCase() ?? '';
@@ -140,5 +140,13 @@ export default function JoinPage() {
       {!identity ? <p className="mt-3 text-sm text-ink/60">Add your profile first to join.</p> : null}
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
     </section>
+  );
+}
+
+export default function JoinPage() {
+  return (
+    <Suspense fallback={<p className="text-sm text-ink/60">Loading session link...</p>}>
+      <JoinPageContent />
+    </Suspense>
   );
 }

@@ -11,6 +11,8 @@
   --warm: #ffd37e;
   --success: #169c64;
   --danger: #b42318;
+  --font-body: 'Avenir Next', 'Segoe UI', 'Helvetica Neue', sans-serif;
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', 'Book Antiqua', serif;
 }
 
 * {
