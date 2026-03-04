@@ -46,7 +46,7 @@ export default function AvailabilityPage() {
         const { data, error: queryError } = await supabase
           .from('availability_templates')
           .select('*')
-          .eq('user_id', identity.id)
+          .eq('user_id', identity!.id)
           .order('weekday', { ascending: true })
           .order('start_time', { ascending: true });
 
