@@ -159,8 +159,8 @@ export default function SessionDetailPage() {
       setBusy(true);
       setError(null);
 
-      // Direct delete with explicit match
-      const { error: deleteError, count } = await supabase
+      // Try direct user_id match first
+      let { error: deleteError, count } = await supabase
         .from('participants')
         .delete({ count: 'exact' })
         .eq('session_id', session.id)
@@ -170,8 +170,31 @@ export default function SessionDetailPage() {
         throw new Error(deleteError.message);
       }
 
+      // Fallback: if no match by user_id, find all user records for this phone
+      // and try deleting by any matching user_id (handles duplicate user records)
+      if (count === 0 && identity.phone) {
+        const { data: phoneUsers } = await supabase
+          .from('users')
+          .select('id')
+          .eq('phone', identity.phone);
+
+        if (phoneUsers && phoneUsers.length > 0) {
+          const userIds = phoneUsers.map((u) => u.id);
+          const { error: fallbackError, count: fallbackCount } = await supabase
+            .from('participants')
+            .delete({ count: 'exact' })
+            .eq('session_id', session.id)
+            .in('user_id', userIds);
+
+          if (fallbackError) {
+            throw new Error(fallbackError.message);
+          }
+          count = fallbackCount;
+        }
+      }
+
       if (count === 0) {
-        setError(`No match found to drop. Your user ID: ${identity.id.slice(0, 8)}...`);
+        setError('Could not find your participation to remove. Try refreshing the page.');
         setBusy(false);
         return;
       }
