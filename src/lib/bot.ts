@@ -1,15 +1,18 @@
 import {
   addDays,
   addHours,
-  format,
-  isToday,
-  parseISO,
   set,
   startOfDay,
   subHours
 } from 'date-fns';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import {
+  fetchAvailabilityWindowsForDate,
+  summarizeAvailabilityPeak,
+  toDateString,
+  upsertAvailabilityWindow
+} from '@/lib/availability-windows';
 import { normalizePhone } from '@/lib/identity';
 import {
   createSession,
@@ -17,11 +20,15 @@ import {
   fetchSessionByCode,
   fetchSessionById,
   formatSessionTime,
+  getConfirmedRangeAtOrAbove,
+  getParticipantWindow,
+  getSessionBounds,
   sortRosterNames,
   summarizeCounts,
   updateParticipation
 } from '@/lib/sessions';
 import { getSupabaseServerClient } from '@/lib/supabase-server';
+import { clampWindowToBounds, formatTimeRange } from '@/lib/time-windows';
 import type { AppUser, Database, SessionWithParticipants } from '@/lib/types';
 
 const QUORUM_THRESHOLDS = [4, 8, 12] as const;
@@ -39,14 +46,26 @@ type ParsedCommand =
   | {
       type: 'join';
       code?: string;
+      arrivesAt?: string;
+      departsAt?: string;
     }
   | {
       type: 'maybe';
       code?: string;
+      arrivesAt?: string;
+      departsAt?: string;
     }
   | {
       type: 'drop';
       code?: string;
+    }
+  | {
+      type: 'available';
+      arrivesAt: string;
+      departsAt: string;
+    }
+  | {
+      type: 'available_missing_time';
     }
   | {
       type: 'status';
@@ -89,6 +108,11 @@ export interface BotCommandResult {
 
 type BotUser = Pick<AppUser, 'id' | 'name' | 'phone'>;
 
+type TimeWindow = {
+  arrivesAt: string;
+  departsAt: string;
+};
+
 function normalizeText(text: string): string {
   return text
     .toLowerCase()
@@ -118,7 +142,9 @@ function helpMessage(): string {
   return [
     'Try one of these commands:',
     'create 6pm-8pm',
+    'available 5-9pm',
     'join ABC123',
+    'join 6-8pm ABC123',
     'maybe ABC123',
     'drop ABC123',
     "status (or who's in?)",
@@ -155,6 +181,59 @@ function to24Hour(hour: number, meridiem: 'am' | 'pm'): number {
   }
 
   return hour === 12 ? 12 : hour + 12;
+}
+
+function toTimeValue(totalMinutes: number): string {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${`${hours}`.padStart(2, '0')}:${`${minutes}`.padStart(2, '0')}`;
+}
+
+function parseTimeWindow(message: string): TimeWindow | null {
+  try {
+    const rangeMatch = message.match(
+      /(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?\s*(?:-|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm|a|p)?/
+    );
+
+    if (!rangeMatch) {
+      return null;
+    }
+
+    const hasMorningHint = /\bmorning\b/.test(message);
+    const defaultMeridiem: 'am' | 'pm' = hasMorningHint ? 'am' : 'pm';
+
+    const startHour = Number(rangeMatch[1]);
+    const startMinute = Number(rangeMatch[2] ?? '0');
+    const startMeridiemRaw = normalizeMeridiem(rangeMatch[3]);
+    const endHour = Number(rangeMatch[4]);
+    const endMinute = Number(rangeMatch[5] ?? '0');
+    const endMeridiemRaw = normalizeMeridiem(rangeMatch[6]);
+
+    if (startMinute > 59 || endMinute > 59) {
+      return null;
+    }
+
+    const startMeridiem = startMeridiemRaw ?? endMeridiemRaw ?? defaultMeridiem;
+    const endMeridiem = endMeridiemRaw ?? startMeridiem;
+
+    const startMinutes = to24Hour(startHour, startMeridiem) * 60 + startMinute;
+    let endMinutes = to24Hour(endHour, endMeridiem) * 60 + endMinute;
+
+    for (let attempt = 0; attempt < 2 && endMinutes <= startMinutes; attempt += 1) {
+      endMinutes += 12 * 60;
+    }
+
+    if (endMinutes <= startMinutes || endMinutes > 24 * 60) {
+      return null;
+    }
+
+    return {
+      arrivesAt: toTimeValue(startMinutes),
+      departsAt: toTimeValue(endMinutes)
+    };
+  } catch {
+    return null;
+  }
 }
 
 function parseCreateTimes(message: string, now: Date): { startsAt: string; endsAt: string } | null {
@@ -291,6 +370,21 @@ function parseCommand(text: string): ParsedCommand {
     };
   }
 
+  if (/^(?:available|avail|i'?m available|i am available|around)\b/.test(normalized)) {
+    const parsedWindow = parseTimeWindow(normalized);
+    if (!parsedWindow) {
+      return {
+        type: 'available_missing_time'
+      };
+    }
+
+    return {
+      type: 'available',
+      arrivesAt: parsedWindow.arrivesAt,
+      departsAt: parsedWindow.departsAt
+    };
+  }
+
   if (/\b(create|new session|new game|start session)\b/.test(normalized)) {
     const parsedTimes = parseCreateTimes(normalized, new Date());
     if (!parsedTimes) {
@@ -314,9 +408,12 @@ function parseCommand(text: string): ParsedCommand {
   }
 
   if (/\bmaybe\b|\bmight\b|\bnot sure\b/.test(normalized)) {
+    const parsedWindow = parseTimeWindow(normalized);
     return {
       type: 'maybe',
-      code
+      code,
+      arrivesAt: parsedWindow?.arrivesAt,
+      departsAt: parsedWindow?.departsAt
     };
   }
 
@@ -328,9 +425,12 @@ function parseCommand(text: string): ParsedCommand {
   }
 
   if (/\bjoin\b|\bi'?m in\b|\bi am in\b|count me in|\byes\b|\byep\b|\bcoming\b/.test(normalized)) {
+    const parsedWindow = parseTimeWindow(normalized);
     return {
       type: 'join',
-      code
+      code,
+      arrivesAt: parsedWindow?.arrivesAt,
+      departsAt: parsedWindow?.departsAt
     };
   }
 
@@ -347,7 +447,7 @@ function maybeExtractBareName(text: string): string | null {
   }
 
   const normalized = normalizeText(cleaned);
-  if (/\b(create|join|maybe|drop|status|cancel|help)\b/.test(normalized)) {
+  if (/\b(create|join|maybe|drop|status|cancel|help|available)\b/.test(normalized)) {
     return null;
   }
 
@@ -487,11 +587,15 @@ function countConfirmed(session: SessionWithParticipants): number {
   return session.participants.filter((participant) => participant.status === 'confirmed').length;
 }
 
-function formatQuorumLabel(session: SessionWithParticipants): string {
-  const startsAt = parseISO(session.starts_at);
-  const endsAt = parseISO(session.ends_at);
-  const day = isToday(startsAt) ? 'tonight' : format(startsAt, 'EEE');
-  return `${day} ${format(startsAt, 'h:mm a')} - ${format(endsAt, 'h:mm a')}`;
+function formatThresholdWindow(session: SessionWithParticipants, threshold: number): string {
+  const thresholdRange = getConfirmedRangeAtOrAbove(session, threshold);
+
+  if (thresholdRange) {
+    return formatTimeRange(thresholdRange.start, thresholdRange.end);
+  }
+
+  const sessionBounds = getSessionBounds(session);
+  return formatTimeRange(sessionBounds.arrivesAt, sessionBounds.departsAt);
 }
 
 function buildQuorumMessages(
@@ -506,17 +610,19 @@ function buildQuorumMessages(
       continue;
     }
 
+    const timeWindow = formatThresholdWindow(session, threshold);
+
     if (threshold === 4) {
-      messages.push(`🏓 We have 4 players for ${formatQuorumLabel(session)}! Game on!`);
+      messages.push(`🏓 4 players available ${timeWindow}! Game on!`);
       continue;
     }
 
     if (threshold === 8) {
-      messages.push('🔥 8 players confirmed! Two courts needed!');
+      messages.push(`🏓 8 players available ${timeWindow}!`);
       continue;
     }
 
-    messages.push('🎉 12 players! Book three courts!');
+    messages.push(`🏓 12 players available ${timeWindow}!`);
   }
 
   return messages;
@@ -548,12 +654,31 @@ function sessionNotFoundMessage(code?: string): string {
   return noUpcomingSessionsMessage();
 }
 
-function formatStatusMessage(sessions: SessionWithParticipants[]): string {
+function formatStatusMessage(
+  sessions: SessionWithParticipants[],
+  availability: {
+    count: number;
+    peak: {
+      start: string;
+      end: string;
+      count: number;
+    } | null;
+  }
+): string {
+  const lines: string[] = [
+    `Today's availability windows: ${availability.count}`,
+    availability.peak
+      ? `Peak overlap: ${formatTimeRange(availability.peak.start, availability.peak.end)} (${availability.peak.count} people)`
+      : 'Peak overlap: none yet',
+    ''
+  ];
+
   if (!sessions.length) {
-    return noUpcomingSessionsMessage();
+    lines.push(noUpcomingSessionsMessage());
+    return lines.join('\n');
   }
 
-  const lines: string[] = ['Upcoming sessions:'];
+  lines.push('Upcoming sessions:');
 
   for (const session of sessions) {
     const confirmedNames = sortRosterNames(session, 'confirmed');
@@ -653,6 +778,13 @@ export async function handleBotCommand(input: BotCommandInput): Promise<BotComma
     };
   }
 
+  if (command.type === 'available_missing_time') {
+    return {
+      reply: maybeWithNamePrompt('Please include a time range, for example: available 5-9pm', userState),
+      notifications: []
+    };
+  }
+
   if (command.type === 'create') {
     const createdSession = await createSession(supabase, {
       startsAt: command.startsAt,
@@ -674,10 +806,46 @@ export async function handleBotCommand(input: BotCommandInput): Promise<BotComma
     };
   }
 
-  if (command.type === 'status') {
-    const sessions = await fetchUpcomingSessions(supabase);
+  if (command.type === 'available') {
+    await upsertAvailabilityWindow(supabase, {
+      userId: user.id,
+      date: toDateString(),
+      arrivesAt: command.arrivesAt,
+      departsAt: command.departsAt
+    });
+
+    const windows = await fetchAvailabilityWindowsForDate(supabase, toDateString());
+    const peak = summarizeAvailabilityPeak(windows);
+
+    const lines = [
+      `Saved for today: ${formatTimeRange(command.arrivesAt, command.departsAt)}.`,
+      `People available today: ${windows.length}`
+    ];
+
+    if (peak) {
+      lines.push(`Peak overlap: ${formatTimeRange(peak.start, peak.end)} (${peak.count} people)`);
+    }
+
     return {
-      reply: maybeWithNamePrompt(formatStatusMessage(sessions), userState),
+      reply: maybeWithNamePrompt(lines.join('\n'), userState),
+      notifications: []
+    };
+  }
+
+  if (command.type === 'status') {
+    const [sessions, windows] = await Promise.all([
+      fetchUpcomingSessions(supabase),
+      fetchAvailabilityWindowsForDate(supabase, toDateString())
+    ]);
+
+    return {
+      reply: maybeWithNamePrompt(
+        formatStatusMessage(sessions, {
+          count: windows.length,
+          peak: summarizeAvailabilityPeak(windows)
+        }),
+        userState
+      ),
       notifications: []
     };
   }
@@ -726,17 +894,22 @@ export async function handleBotCommand(input: BotCommandInput): Promise<BotComma
 
     const existingParticipation = targetSession.participants.find((participant) => participant.user_id === user.id);
 
-    if (command.type === 'join' && existingParticipation?.status === 'confirmed') {
+    if (
+      command.type === 'join' &&
+      existingParticipation?.status === 'confirmed' &&
+      (!command.arrivesAt || !command.departsAt)
+    ) {
       return {
-        reply: maybeWithNamePrompt(
-          `You are already confirmed for ${targetSession.code}.`,
-          userState
-        ),
+        reply: maybeWithNamePrompt(`You are already confirmed for ${targetSession.code}.`, userState),
         notifications: []
       };
     }
 
-    if (command.type === 'maybe' && existingParticipation?.status === 'maybe') {
+    if (
+      command.type === 'maybe' &&
+      existingParticipation?.status === 'maybe' &&
+      (!command.arrivesAt || !command.departsAt)
+    ) {
       return {
         reply: maybeWithNamePrompt(`You are already marked maybe for ${targetSession.code}.`, userState),
         notifications: []
@@ -760,10 +933,35 @@ export async function handleBotCommand(input: BotCommandInput): Promise<BotComma
     }
 
     if (command.type === 'join' || command.type === 'maybe') {
+      const sessionBounds = getSessionBounds(targetSession);
+      const providedWindow =
+        command.arrivesAt && command.departsAt
+          ? {
+              arrivesAt: command.arrivesAt,
+              departsAt: command.departsAt
+            }
+          : null;
+
+      const participationWindow = providedWindow
+        ? clampWindowToBounds(providedWindow, sessionBounds)
+        : sessionBounds;
+
+      if (!participationWindow) {
+        return {
+          reply: maybeWithNamePrompt(
+            `Your time window needs to overlap ${formatTimeRange(sessionBounds.arrivesAt, sessionBounds.departsAt)}.`,
+            userState
+          ),
+          notifications: []
+        };
+      }
+
       await updateParticipation(supabase, {
         sessionId: targetSession.id,
         userId: user.id,
-        status: command.type === 'join' ? 'confirmed' : 'maybe'
+        status: command.type === 'join' ? 'confirmed' : 'maybe',
+        arrivesAt: participationWindow.arrivesAt,
+        departsAt: participationWindow.departsAt
       });
     }
 
@@ -790,6 +988,16 @@ export async function handleBotCommand(input: BotCommandInput): Promise<BotComma
       };
     }
 
+    const refreshedParticipant = refreshedSession.participants.find((participant) => participant.user_id === user.id);
+    const participantWindow =
+      refreshedParticipant && (command.type === 'join' || command.type === 'maybe')
+        ? getParticipantWindow(refreshedSession, refreshedParticipant)
+        : null;
+    const fallbackBounds = getSessionBounds(refreshedSession);
+    const windowLabel = participantWindow
+      ? formatTimeRange(participantWindow.arrivesAt, participantWindow.departsAt)
+      : formatTimeRange(fallbackBounds.arrivesAt, fallbackBounds.departsAt);
+
     const verb = command.type === 'join' ? 'You are in' : 'Marked as maybe';
 
     return {
@@ -797,7 +1005,7 @@ export async function handleBotCommand(input: BotCommandInput): Promise<BotComma
         `${verb} for ${refreshedSession.code} (${formatSessionTime(
           refreshedSession.starts_at,
           refreshedSession.ends_at
-        )}).\n${summarizeCounts(refreshedSession)}`,
+        )}).\nWindow: ${windowLabel}\n${summarizeCounts(refreshedSession)}`,
         userState
       ),
       notifications: quorumMessages.map((body) => ({

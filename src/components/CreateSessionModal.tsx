@@ -5,6 +5,7 @@ import { useMemo, useState, type FormEvent } from 'react';
 
 import { createSession } from '@/lib/sessions';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
+import { HALF_HOUR_OPTIONS } from '@/lib/time-windows';
 
 interface CreateSessionModalProps {
   isOpen: boolean;
@@ -12,19 +13,6 @@ interface CreateSessionModalProps {
   onClose: () => void;
   onCreated: (sessionId: string) => void;
 }
-
-type TimeOption = {
-  value: string;
-  label: string;
-};
-
-const HALF_HOUR_OPTIONS: TimeOption[] = Array.from({ length: 48 }, (_, slotIndex) => {
-  const hour = Math.floor(slotIndex / 2);
-  const minute = (slotIndex % 2) * 30;
-  const value = `${`${hour}`.padStart(2, '0')}:${`${minute}`.padStart(2, '0')}`;
-  const label = format(new Date(2026, 0, 1, hour, minute), 'h:mm a');
-  return { value, label };
-});
 
 function roundUpToHalfHour(input: Date): Date {
   const next = new Date(input);

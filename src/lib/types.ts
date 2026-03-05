@@ -27,6 +27,8 @@ export type Participant = {
   session_id: string;
   user_id: string;
   status: ParticipantStatus;
+  arrives_at: string | null;
+  departs_at: string | null;
   created_at: string;
   updated_at: string;
   user?: Pick<AppUser, 'id' | 'name' | 'phone'> | null;
@@ -42,6 +44,16 @@ export type AvailabilityTemplate = {
   weekday: number;
   start_time: string;
   end_time: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AvailabilityWindow = {
+  id: string;
+  user_id: string;
+  date: string;
+  arrives_at: string;
+  departs_at: string;
   created_at: string;
   updated_at: string;
 };
@@ -118,6 +130,8 @@ export interface Database {
           session_id: string;
           user_id: string;
           status: ParticipantStatus;
+          arrives_at?: string | null;
+          departs_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -126,6 +140,8 @@ export interface Database {
           session_id?: string;
           user_id?: string;
           status?: ParticipantStatus;
+          arrives_at?: string | null;
+          departs_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -139,6 +155,36 @@ export interface Database {
           },
           {
             foreignKeyName: 'participants_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      availability_windows: {
+        Row: AvailabilityWindow;
+        Insert: {
+          id?: string;
+          user_id: string;
+          date?: string;
+          arrives_at: string;
+          departs_at: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          date?: string;
+          arrives_at?: string;
+          departs_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'availability_windows_user_id_fkey';
             columns: ['user_id'];
             isOneToOne: false;
             referencedRelation: 'users';

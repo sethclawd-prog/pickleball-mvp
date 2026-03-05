@@ -8,6 +8,7 @@ import { IDENTITY_UPDATED_EVENT, getStoredIdentity } from '@/lib/identity';
 import {
   fetchSessionByCode,
   formatSessionTime,
+  getSessionBounds,
   summarizeCounts,
   updateParticipation
 } from '@/lib/sessions';
@@ -63,13 +64,17 @@ function JoinPageContent() {
       return;
     }
 
+    const sessionBounds = getSessionBounds(session);
+
     try {
       setBusy(true);
       setError(null);
       await updateParticipation(supabase, {
         sessionId: session.id,
         userId: identity.id,
-        status
+        status,
+        arrivesAt: sessionBounds.arrivesAt,
+        departsAt: sessionBounds.departsAt
       });
       router.push(`/session/${session.id}`);
     } catch (joinError) {

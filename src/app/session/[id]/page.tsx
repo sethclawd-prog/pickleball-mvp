@@ -5,16 +5,20 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
 import RosterList from '@/components/RosterList';
+import SessionTimelineHeatmap from '@/components/SessionTimelineHeatmap';
 import ShareButton from '@/components/ShareButton';
 import { IDENTITY_UPDATED_EVENT, getStoredIdentity } from '@/lib/identity';
 import {
   dropParticipation,
   fetchSessionById,
   formatSessionTime,
+  getParticipantWindow,
+  getSessionBounds,
   summarizeCounts,
   updateParticipation
 } from '@/lib/sessions';
 import { getSupabaseBrowserClient } from '@/lib/supabase';
+import { HALF_HOUR_OPTIONS, formatTimeRange, minutesFromTimeValue } from '@/lib/time-windows';
 import type { ParticipantStatus, SessionWithParticipants, StoredIdentity } from '@/lib/types';
 
 export default function SessionDetailPage() {
@@ -28,6 +32,9 @@ export default function SessionDetailPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [origin, setOrigin] = useState('');
+  const [editingStatus, setEditingStatus] = useState<ParticipantStatus | null>(null);
+  const [arrivesAt, setArrivesAt] = useState('17:00');
+  const [departsAt, setDepartsAt] = useState('21:00');
 
   const loadSession = useCallback(async () => {
     if (!sessionId) {
@@ -82,16 +89,64 @@ export default function SessionDetailPage() {
     };
   }, [loadSession, sessionId, supabase]);
 
-  const currentStatus = useMemo<ParticipantStatus | null>(() => {
+  const currentParticipation = useMemo(() => {
     if (!session || !identity) {
       return null;
     }
 
-    const existing = session.participants.find((participant) => participant.user_id === identity.id);
-    return existing?.status ?? null;
+    return session.participants.find((participant) => participant.user_id === identity.id) ?? null;
   }, [identity, session]);
 
-  async function handleStatusChange(next: ParticipantStatus | 'drop') {
+  const currentStatus = currentParticipation?.status ?? null;
+
+  function openWindowPicker(status: ParticipantStatus) {
+    if (!session) {
+      return;
+    }
+
+    const fallbackWindow = getSessionBounds(session);
+    const baseWindow = currentParticipation
+      ? getParticipantWindow(session, currentParticipation)
+      : fallbackWindow;
+
+    setArrivesAt(baseWindow.arrivesAt);
+    setDepartsAt(baseWindow.departsAt);
+    setEditingStatus(status);
+    setError(null);
+  }
+
+  async function submitParticipationWindow() {
+    if (!identity || !session || !editingStatus) {
+      return;
+    }
+
+    if (minutesFromTimeValue(arrivesAt) >= minutesFromTimeValue(departsAt)) {
+      setError('Departure time must be after arrival time.');
+      return;
+    }
+
+    try {
+      setBusy(true);
+      setError(null);
+
+      await updateParticipation(supabase, {
+        sessionId: session.id,
+        userId: identity.id,
+        status: editingStatus,
+        arrivesAt,
+        departsAt
+      });
+
+      setEditingStatus(null);
+      await loadSession();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : 'Could not update your status.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDrop() {
     if (!identity || !session) {
       return;
     }
@@ -100,19 +155,12 @@ export default function SessionDetailPage() {
       setBusy(true);
       setError(null);
 
-      if (next === 'drop') {
-        await dropParticipation(supabase, {
-          sessionId: session.id,
-          userId: identity.id
-        });
-      } else {
-        await updateParticipation(supabase, {
-          sessionId: session.id,
-          userId: identity.id,
-          status: next
-        });
-      }
+      await dropParticipation(supabase, {
+        sessionId: session.id,
+        userId: identity.id
+      });
 
+      setEditingStatus(null);
       await loadSession();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Could not update your status.');
@@ -138,6 +186,7 @@ export default function SessionDetailPage() {
   }
 
   const shareUrl = `${origin}/join?code=${session.code}`;
+  const currentWindow = currentParticipation ? getParticipantWindow(session, currentParticipation) : null;
 
   return (
     <div className="space-y-4">
@@ -159,7 +208,7 @@ export default function SessionDetailPage() {
           <button
             type="button"
             disabled={busy}
-            onClick={() => handleStatusChange('confirmed')}
+            onClick={() => openWindowPicker('confirmed')}
             className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
               currentStatus === 'confirmed' ? 'bg-success text-white' : 'bg-surface-2 text-ink hover:bg-accent-soft'
             }`}
@@ -169,7 +218,7 @@ export default function SessionDetailPage() {
           <button
             type="button"
             disabled={busy}
-            onClick={() => handleStatusChange('maybe')}
+            onClick={() => openWindowPicker('maybe')}
             className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
               currentStatus === 'maybe' ? 'bg-warm text-ink' : 'bg-surface-2 text-ink hover:bg-accent-soft'
             }`}
@@ -179,7 +228,7 @@ export default function SessionDetailPage() {
           <button
             type="button"
             disabled={busy}
-            onClick={() => handleStatusChange('drop')}
+            onClick={handleDrop}
             className="rounded-xl bg-surface-2 px-4 py-2 text-sm font-semibold text-ink/70 transition hover:bg-danger/10 hover:text-danger"
           >
             Drop
@@ -200,10 +249,63 @@ export default function SessionDetailPage() {
           </a>
         </div>
 
+        {currentWindow ? (
+          <p className="mt-3 text-sm text-ink/70">You: {formatTimeRange(currentWindow.arrivesAt, currentWindow.departsAt)} ✓</p>
+        ) : null}
+
+        {editingStatus ? (
+          <div className="mt-4 rounded-2xl border border-accent/20 bg-accent-soft/60 p-3">
+            <p className="text-sm font-semibold text-ink">I&apos;ll be there from</p>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <select
+                value={arrivesAt}
+                onChange={(event) => setArrivesAt(event.target.value)}
+                className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 text-sm text-ink outline-none ring-accent focus:ring-2"
+              >
+                {HALF_HOUR_OPTIONS.map((option) => (
+                  <option key={`arrives-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={departsAt}
+                onChange={(event) => setDepartsAt(event.target.value)}
+                className="w-full rounded-xl border border-ink/15 bg-white px-3 py-2 text-sm text-ink outline-none ring-accent focus:ring-2"
+              >
+                {HALF_HOUR_OPTIONS.map((option) => (
+                  <option key={`departs-${option.value}`} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={submitParticipationWindow}
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                {editingStatus === 'confirmed' ? 'Confirm join' : 'Save maybe'}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setEditingStatus(null)}
+                className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-ink/70 transition hover:bg-surface-2"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
       </section>
 
       <RosterList session={session} />
+      <SessionTimelineHeatmap session={session} />
     </div>
   );
 }
