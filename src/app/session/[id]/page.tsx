@@ -200,6 +200,19 @@ export default function SessionDetailPage() {
       }
 
       setEditingStatus(null);
+
+      // If no participants left, delete the empty session and redirect home
+      const { count: remaining } = await supabase
+        .from('participants')
+        .select('id', { head: true, count: 'exact' })
+        .eq('session_id', session.id);
+
+      if (remaining === 0) {
+        await supabase.from('sessions').delete().eq('id', session.id);
+        window.location.href = '/';
+        return;
+      }
+
       await loadSession();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : 'Could not update your status.');
