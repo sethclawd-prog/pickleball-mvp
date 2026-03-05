@@ -1,8 +1,10 @@
 import {
+  addHours,
   addDays,
   endOfDay,
   format,
   formatISO,
+  isValid,
   isToday,
   parseISO,
   startOfDay
@@ -43,6 +45,29 @@ const sessionSelect = `
   )
 `;
 
+function parseIsoDate(value: string | null | undefined): Date | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = parseISO(value);
+  return isValid(parsed) ? parsed : null;
+}
+
+function normalizeEndsAt(startsAt: string, endsAt: string | null | undefined): string {
+  const endDate = parseIsoDate(endsAt);
+  if (endDate && endsAt) {
+    return endsAt;
+  }
+
+  const startDate = parseIsoDate(startsAt);
+  if (!startDate) {
+    return startsAt;
+  }
+
+  return addHours(startDate, 2).toISOString();
+}
+
 function mapSession(raw: any): SessionWithParticipants {
   const participants = (raw.participants ?? []).map((participant: any) => ({
     id: participant.id,
@@ -64,7 +89,7 @@ function mapSession(raw: any): SessionWithParticipants {
     id: raw.id,
     code: raw.code,
     starts_at: raw.starts_at,
-    ends_at: raw.ends_at,
+    ends_at: normalizeEndsAt(raw.starts_at, raw.ends_at),
     note: raw.note,
     capacity: raw.capacity,
     court: raw.court,
@@ -232,9 +257,13 @@ export async function dropParticipation(
   }
 }
 
-export function formatSessionTime(startsAt: string, endsAt: string): string {
-  const startDate = parseISO(startsAt);
-  const endDate = parseISO(endsAt);
+export function formatSessionTime(startsAt: string, endsAt?: string | null): string {
+  const startDate = parseIsoDate(startsAt);
+  if (!startDate) {
+    return 'Time TBD';
+  }
+
+  const endDate = parseIsoDate(endsAt) ?? addHours(startDate, 2);
   const dayLabel = isToday(startDate) ? 'Today' : format(startDate, 'EEE');
   return `${dayLabel} ${format(startDate, 'h:mm a')} - ${format(endDate, 'h:mm a')}`;
 }
