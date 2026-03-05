@@ -147,7 +147,11 @@ export default function SessionDetailPage() {
   }
 
   async function handleDrop() {
-    if (!identity || !session) {
+    if (!identity) {
+      setError('Please set up your profile first (tap the prompt at the bottom of the screen).');
+      return;
+    }
+    if (!session) {
       return;
     }
 
@@ -240,7 +244,7 @@ export default function SessionDetailPage() {
             url={shareUrl}
           />
           <a
-            href="https://www.baypadel.com"
+            href="https://book.baypadel.us/home"
             target="_blank"
             rel="noreferrer"
             className="rounded-xl border border-accent/30 bg-accent-soft px-4 py-2 text-sm font-semibold text-ink transition hover:opacity-90"

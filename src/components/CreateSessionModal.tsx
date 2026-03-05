@@ -219,7 +219,7 @@ export default function CreateSessionModal({
           </div>
 
           <a
-            href="https://www.baypadel.com"
+            href="https://book.baypadel.us/home"
             target="_blank"
             rel="noreferrer"
             className="flex w-full items-center justify-center rounded-xl border border-accent/30 bg-accent-soft px-4 py-2.5 text-sm font-semibold text-ink transition hover:opacity-90"
