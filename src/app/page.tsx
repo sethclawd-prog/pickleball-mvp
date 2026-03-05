@@ -20,10 +20,19 @@ import { getSupabaseBrowserClient } from '@/lib/supabase';
 import { HALF_HOUR_OPTIONS, formatTimeRange, minutesFromTimeValue } from '@/lib/time-windows';
 import type { SessionWithParticipants, StoredIdentity } from '@/lib/types';
 
+const EVENING_START_TIME = '17:00:00';
+const EVENING_END_TIME = '22:00:00';
+
+type UsuallyFreeUser = {
+  id: string;
+  name: string;
+};
+
 export default function HomePage() {
   const router = useRouter();
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const todayDate = useMemo(() => toDateString(), []);
+  const todayWeekday = useMemo(() => new Date().getDay(), []);
 
   const [sessions, setSessions] = useState<SessionWithParticipants[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +47,9 @@ export default function HomePage() {
   const [editingAvailability, setEditingAvailability] = useState(false);
   const [arrivesAt, setArrivesAt] = useState('17:00');
   const [departsAt, setDepartsAt] = useState('21:00');
+  const [usuallyFreeUsers, setUsuallyFreeUsers] = useState<UsuallyFreeUser[]>([]);
+  const [usuallyFreeLoading, setUsuallyFreeLoading] = useState(true);
+  const [usuallyFreeError, setUsuallyFreeError] = useState<string | null>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -65,10 +77,61 @@ export default function HomePage() {
     }
   }, [supabase, todayDate]);
 
+  const loadUsuallyFreeUsers = useCallback(async () => {
+    try {
+      setUsuallyFreeLoading(true);
+      setUsuallyFreeError(null);
+
+      const { data, error: queryError } = await supabase
+        .from('availability_templates')
+        .select(
+          `
+          user_id,
+          start_time,
+          end_time,
+          users (
+            id,
+            name
+          )
+        `
+        )
+        .eq('weekday', todayWeekday)
+        .lt('start_time', EVENING_END_TIME)
+        .gt('end_time', EVENING_START_TIME);
+
+      if (queryError) {
+        throw new Error(queryError.message);
+      }
+
+      const uniqueUsers = new Map<string, UsuallyFreeUser>();
+      (data ?? []).forEach((row: any) => {
+        const relatedUser = Array.isArray(row.users) ? row.users[0] : row.users;
+        if (!relatedUser?.id || !relatedUser?.name || uniqueUsers.has(row.user_id)) {
+          return;
+        }
+
+        uniqueUsers.set(row.user_id, {
+          id: row.user_id,
+          name: relatedUser.name
+        });
+      });
+
+      setUsuallyFreeUsers(
+        Array.from(uniqueUsers.values()).sort((a, b) => a.name.localeCompare(b.name))
+      );
+    } catch (loadError) {
+      setUsuallyFreeUsers([]);
+      setUsuallyFreeError(loadError instanceof Error ? loadError.message : 'Could not load weekly availability.');
+    } finally {
+      setUsuallyFreeLoading(false);
+    }
+  }, [supabase, todayWeekday]);
+
   useEffect(() => {
     setIdentity(getStoredIdentity());
     void loadSessions();
     void loadAvailability();
+    void loadUsuallyFreeUsers();
 
     const channel = supabase
       .channel('home-data')
@@ -81,6 +144,9 @@ export default function HomePage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'availability_windows' }, () => {
         void loadAvailability();
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'availability_templates' }, () => {
+        void loadUsuallyFreeUsers();
+      })
       .subscribe();
 
     const onIdentityUpdate = () => setIdentity(getStoredIdentity());
@@ -90,7 +156,7 @@ export default function HomePage() {
       window.removeEventListener(IDENTITY_UPDATED_EVENT, onIdentityUpdate);
       void supabase.removeChannel(channel);
     };
-  }, [loadAvailability, loadSessions, supabase]);
+  }, [loadAvailability, loadSessions, loadUsuallyFreeUsers, supabase]);
 
   const yourWindow = useMemo(
     () => findAvailabilityWindowForUser(availabilityWindows, identity?.id),
@@ -105,6 +171,24 @@ export default function HomePage() {
   const availabilityPeak = useMemo(
     () => summarizeAvailabilityPeak(availabilityWindows),
     [availabilityWindows]
+  );
+
+  const usuallyFreeTonightNames = useMemo(
+    () =>
+      usuallyFreeUsers
+        .filter((user) => user.id !== identity?.id)
+        .map((user) => user.name),
+    [usuallyFreeUsers, identity?.id]
+  );
+
+  const usuallyFreeTonightPreview = useMemo(
+    () => usuallyFreeTonightNames.slice(0, 3),
+    [usuallyFreeTonightNames]
+  );
+
+  const usuallyFreeTonightExtraCount = Math.max(
+    usuallyFreeTonightNames.length - usuallyFreeTonightPreview.length,
+    0
   );
 
   useEffect(() => {
@@ -305,6 +389,24 @@ export default function HomePage() {
             </ul>
           )}
         </div>
+      </section>
+
+      <section className="rounded-2xl border border-white/70 bg-white/85 p-4 shadow-card">
+        <h2 className="text-sm font-semibold text-ink">Usually free today</h2>
+
+        {usuallyFreeLoading ? <p className="mt-2 text-sm text-ink/60">Checking weekly templates...</p> : null}
+        {usuallyFreeError ? <p className="mt-2 text-sm text-danger">{usuallyFreeError}</p> : null}
+
+        {!usuallyFreeLoading && !usuallyFreeError && !usuallyFreeTonightNames.length ? (
+          <p className="mt-2 text-sm text-ink/60">No one has posted evening weekly availability yet.</p>
+        ) : null}
+
+        {!usuallyFreeLoading && !usuallyFreeError && usuallyFreeTonightNames.length ? (
+          <p className="mt-2 text-sm text-ink">
+            Usually free tonight: {usuallyFreeTonightPreview.join(', ')}
+            {usuallyFreeTonightExtraCount > 0 ? ` (+${usuallyFreeTonightExtraCount} more)` : ''}
+          </p>
+        ) : null}
       </section>
 
       {loading ? <p className="text-sm text-ink/60">Loading sessions...</p> : null}

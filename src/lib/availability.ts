@@ -2,21 +2,21 @@ import { format } from 'date-fns';
 
 import type { AvailabilityTemplate } from '@/lib/types';
 
-const START_MINUTES = 5 * 60;
+const START_MINUTES = 6 * 60;
 const END_MINUTES = 22 * 60;
-const MINUTES_PER_SLOT = 30;
+
+export const SLOT_DURATION_HOURS = 1;
+export const SLOT_DURATION_MINUTES = SLOT_DURATION_HOURS * 60;
 
 export const TIME_SLOTS = Array.from(
-  { length: (END_MINUTES - START_MINUTES) / MINUTES_PER_SLOT + 1 },
+  { length: (END_MINUTES - START_MINUTES) / SLOT_DURATION_MINUTES },
   (_, index) => {
-    const totalMinutes = START_MINUTES + index * MINUTES_PER_SLOT;
+    const totalMinutes = START_MINUTES + index * SLOT_DURATION_MINUTES;
     const hour = Math.floor(totalMinutes / 60);
     const minute = totalMinutes % 60;
     return `${`${hour}`.padStart(2, '0')}:${`${minute}`.padStart(2, '0')}`;
   }
 );
-
-export const SLOT_DURATION_MINUTES = 30;
 
 export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -37,7 +37,7 @@ function formatTimeFromMinutes(totalMinutes: number): string {
 
 export function formatSlotLabel(slot: string): string {
   const [hours, minutes] = slot.split(':').map(Number);
-  return format(new Date(2026, 0, 1, hours, minutes, 0, 0), 'h:mm a');
+  return format(new Date(2026, 0, 1, hours, minutes, 0, 0), 'ha').toLowerCase();
 }
 
 export function templateRowsFromSelection(selection: Set<string>, userId: string): Omit<AvailabilityTemplate, 'id' | 'created_at' | 'updated_at'>[] {
