@@ -159,10 +159,22 @@ export default function SessionDetailPage() {
       setBusy(true);
       setError(null);
 
-      await dropParticipation(supabase, {
-        sessionId: session.id,
-        userId: identity.id
-      });
+      // Direct delete with explicit match
+      const { error: deleteError, count } = await supabase
+        .from('participants')
+        .delete({ count: 'exact' })
+        .eq('session_id', session.id)
+        .eq('user_id', identity.id);
+
+      if (deleteError) {
+        throw new Error(deleteError.message);
+      }
+
+      if (count === 0) {
+        setError(`No match found to drop. Your user ID: ${identity.id.slice(0, 8)}...`);
+        setBusy(false);
+        return;
+      }
 
       setEditingStatus(null);
       await loadSession();
